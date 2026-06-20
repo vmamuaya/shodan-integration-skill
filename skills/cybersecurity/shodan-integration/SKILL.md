@@ -263,14 +263,20 @@ for e in exploits['matches']:
     print(f"  {e.get('id', e.get('cve', 'unknown'))}: {e.get('description', '')[:80]}")
 
 # === DNS ===
-subdomains = api.dns.domain("example.com")
+subdomains = api.dns.domain_info("example.com")
 # Returns list of subdomains: ['www', 'mail', 'admin', ...]
+# Note: shodan 1.31.0 only has api.dns.domain_info; no .resolve() or .reverse()
+# Use api.host(ip) for reverse DNS - it includes 'hostnames' field
 
-resolved = api.dns.resolve(["www.example.com", "mail.example.com"])
-# Returns dict of hostname -> [ips]
+# For DNS resolution, use the REST API directly:
+import urllib.request, json
+req = urllib.request.Request("https://api.shodan.io/dns/resolve?hostnames=example.com,www.example.com&key=" + API_KEY)
+with urllib.request.urlopen(req) as resp:
+    resolved = json.loads(resp.read().decode())  # {"example.com": ["1.2.3.4"], ...}
 
-reversed_dns = api.dns.reverse(["8.8.8.8"])
-# Returns list of {ip, hostname} dicts
+req = urllib.request.Request("https://api.shodan.io/dns/reverse?ips=1.2.3.4,5.6.7.8&key=" + API_KEY)
+with urllib.request.urlopen(req) as resp:
+    reversed_dns = json.loads(resp.read().decode())  # list of {ip, hostname}
 
 # === HONEYSCORE (is this IP a honeypot?) ===
 score = api.labs.honeyscore("1.2.3.4")
@@ -612,22 +618,54 @@ When using Shodan through AI agent workflows:
 - **Documentation**: For audit, log every query made, the operator, the case ID, and the justification
 
 ## Configuration
+## Verified Environment (2026-06-20)
+
+Real data captured against a live Developer API account (`$59/mo`, 100 query credits/mo):
+
+| Component | Verified Value |
+|-----------|----------------|
+| **Plan** | dev |
+| **Library version** | shodan 1.31.0 (Python) |
+| **Library API** | `api.host`, `api.search`, `api.count`, `api.info`, `api.dns.domain_info`, `api.labs.honeyscore`, `api.tools.myip`, `api.stream.banners` |
+| **Auth method** | URL query param `?key=*** (Bearer header returns 401 on this account) |
+| **8.8.8.8** | Google LLC, AS15169, Mountain View, dns.google, ports 53/443 |
+| **Log4Shell worldwide** | 6 hosts still showing CVE-2021-44228 in banners |
+| **Google search `org:Google port:80,443`** | 3,473,968 matches |
+| **google.com subdomains** | 32 enumerated via `api.dns.domain_info` |
+| **Honeyscore on 8.8.8.8** | 0.0 (real, not honeypot) |
+
+**Library API gotcha:** `api.dns.resolve()` and `api.dns.reverse()` were removed in shodan 1.31.0. Only `api.dns.domain_info()` remains. For IP↔hostname lookups, use the REST API directly (`/dns/resolve`, `/dns/reverse`) or rely on `api.host()`'s `hostnames` field.
+
+## Configuration
 
 ### Environment Variables
 
 ```bash
-export SHODAN_API_KEY="your-key-here"
-export SHODAN_DAILY_BUDGET=1000   # max credits per day for agent use
-export SHODAN_ORG_ALLOWLIST="Acme Corp|Acme Inc"  # only allow queries for these orgs
+export SHODAN_API_KEY="your...port SHODAN_DAILY_BUDGET=50        # max query credits per day for agent use
+export SHODAN_ORG_ALLOWLIST="SapphireGuard|Acme Corp"  # only allow queries for these orgs
 ```
 
 ### Verify Setup
 
 ```bash
-shodan init $SHODAN_API_KEY
-shodan info
-# Should show your plan, query credits remaining, monitor nets
-```
+# Install library
+pip install shodan  # or: uv pip install shodan
+
+# Quick test (URL query param works on dev plan)
+python3 -c "
+import shodan
+api = shodan.Shodan('YOUR_KEY')
+print(api.tools.myip())
+print(api.info())
+"
+
+# Or with env file
+set -a && source /tmp/shodan.env && set +a
+python3 -c "
+import shodan, os
+api = shodan.Shodan(os.environ['SHODAN_API_KEY'])
+print(api.info())
+"
 
 ## Related Tools
 
